@@ -82,7 +82,7 @@ def moves_final_demand_from_sorted_index_by_sector(
 
 
 def moves_from_sorted_index_by_sector(
-    model, sector: str,
+    model, percentage_change:float, sector: str,
     regions_index: List[int],
     reloc: bool = False,
     coeff_increase_by_region_sector=None,
@@ -95,6 +95,7 @@ def moves_from_sorted_index_by_sector(
         sector (str): name of a product (or industry)
         regions_index (List[int]): list of ordered region indices
         reloc (bool): True if relocation is allowed. Defaults to None.
+        percentage_change (float): percentage to reallocate (to reallocate 5%, the input should be 5)
 
     Returns:
         Tuple[pd.DataFrame]: tuple with 2 elements :
@@ -112,13 +113,28 @@ def moves_from_sorted_index_by_sector(
     # french total importations demand for each sector / final demand
     inter_imports = Z["FR"].drop("FR", level=0).groupby(level=1).sum().loc[sector]
     final_imports = Y["FR"].drop("FR", level=0).groupby(level=1).sum().loc[sector]
-    total_imports = inter_imports.sum() + final_imports.sum()
+        
     inter_autoconso_FR = (
         Z.loc[("FR", sector), ("FR", slice(None))]
     )
     final_autoconso_FR = (
         Y.loc[("FR", sector), ("FR", slice(None))]
     )
+
+    #ICI
+    inter_imports_before_change = inter_imports.copy()
+    final_imports_before_change = final_imports.copy()
+    # Si percentage_change est spécifié, on ajuste total_imports en conséquence
+    if percentage_change is not None:
+        inter_imports *= (1 + percentage_change/100)
+        import_change_inter = inter_imports - inter_imports_before_change
+        inter_autoconso_FR -= import_change_inter
+        
+        final_imports *= (1 + percentage_change/100)
+        import_change_final = final_imports - final_imports_before_change
+        final_autoconso_FR -= import_change_final
+
+    total_imports = inter_imports.sum() + final_imports.sum()
 
     if coeff_increase_by_region_sector is None :
         # export capacities of each regions the two parameters determine how much production each region/sector can do for France
@@ -165,7 +181,7 @@ def moves_from_sorted_index_by_sector(
         (final_imports / total_imports).to_frame("").fillna(0).T
     )
     new_final_imports.loc["FR"] += final_autoconso_FR["FR"]
- 
+
     return new_inter_imports, new_final_imports
 
 
@@ -214,7 +230,7 @@ def moves_final_demand_from_sort_rule(
 
 
 def moves_from_sort_rule(
-    model,
+    model, sectors_list:List[str], percentage_change:float,
     sorting_rule_by_sector: Callable[[Model,str, bool, int, str], List[int]],
     reloc: bool = False,
     scope:int =3,
@@ -228,6 +244,7 @@ def moves_from_sort_rule(
         model (Model): object Model defined in model.py
         sorting_rule_by_sector (Callable[[str, bool], List[int]]): given a sector name and the reloc value, returns a sorted list of regions' indices
         reloc (bool, optional): True if relocation is allowed. Defaults to False
+        sectors_list (list): List of sectors to apply the scenario on
         coeff_increase_by_region_sector (pd.DataFrame, optional) : values per region and sector (with same aggregation as iot) of the possible amount of import increase from each foreign sector/region.
         increase_french_import (float): parameter to cap maximal increase of imports from France
         scenar_stressors (str): name of the stressors group to perform the sorting on (see predefined keys in STRESSORS_DICT_DEF variable in src/stressors.py)
@@ -238,19 +255,17 @@ def moves_from_sort_rule(
 
     stressors_used = STRESSORS_DICT_DEF[scenar_stressors]["dict"]
 
-    sectors_list = model.sectors
     new_Z = model.iot.Z.copy()
     new_Y = model.iot.Y.copy()
     x=model.iot.x.copy()
-    new_Z["FR"] = new_Z["FR"] * 0
-    new_Y["FR"] = new_Y["FR"] * 0
-    
+    new_Z.loc[(slice(None), sectors_list), ("FR", slice(None))] = new_Z.loc[(slice(None), sectors_list), ("FR", slice(None))] * 0
+    new_Y.loc[(slice(None), sectors_list), ("FR", slice(None))] = new_Y.loc[(slice(None), sectors_list), ("FR", slice(None))] * 0
 
     for sector in sectors_list:
         regions_index = sorting_rule_by_sector(model, sector, reloc, scope, stressors_used)
         new_inter_imports, new_final_imports = moves_from_sorted_index_by_sector(
-            model=model, sector=sector, regions_index=regions_index, reloc=reloc,coeff_increase_by_region_sector=coeff_increase_by_region_sector,
-            increase_french_import=increase_french_import
+            model=model, sector=sector, regions_index=regions_index, reloc=reloc, coeff_increase_by_region_sector=coeff_increase_by_region_sector,
+            percentage_change=percentage_change, increase_french_import=increase_french_import
         )
         new_Z.loc[(slice(None), sector), ("FR", slice(None))] = new_inter_imports.values
         new_Y.loc[(slice(None), sector), ("FR", slice(None))] = new_final_imports.values
@@ -309,7 +324,9 @@ def scenar_best(
         scope:int =3,
         coeff_increase_by_region_sector : pd.DataFrame = None,
         # increase_french_import: float =CAP_IMPORTS_INCREASE_PARAM,
-        scenar_stressors: str=DEFAULT_SCENAR_STRESSORS
+        scenar_stressors: str=DEFAULT_SCENAR_STRESSORS,
+        percentage_change: float=None, # Nouvel argument pour définir le pourcentage d'importation à réallouer pour le secteur en cours
+        sectors_list: list = None # Nouvel argument pour pouvoir définir une liste de secteurs particuliers où appliquer un scénario
         ) -> pymrio.IOSystem:
     """Finds the least stressor-intense imports reallocation for all sectors
 
@@ -327,12 +344,15 @@ def scenar_best(
             - reallocated Z matrix
             - reallocated Y matrix
     """
+    sectors_list = model.sectors if not sectors_list else sectors_list
 
     return moves_from_sort_rule(
         model=model,
         sorting_rule_by_sector=sort_by_content,
         reloc=reloc,
         scope=scope,
+        sectors_list=sectors_list,
+        percentage_change=percentage_change,
         coeff_increase_by_region_sector=coeff_increase_by_region_sector,
         scenar_stressors=scenar_stressors
         # increase_french_import=increase_french_import,
@@ -344,6 +364,8 @@ def scenar_worst(model: Model,
                  scope:int =3,
                  scenar_stressors: str=DEFAULT_SCENAR_STRESSORS,
                  # increase_french_import: float =CAP_IMPORTS_INCREASE_PARAM,
+                 percentage_change: float=None,
+                 sectors_list: list = None
                  ) -> pymrio.IOSystem:
     """Finds the most stressor-intense imports reallocation for all sectors
 
@@ -359,11 +381,14 @@ def scenar_worst(model: Model,
             - reallocated Z matrix
             - reallocated Y matrix
     """
+    sectors_list = model.sectors if not sectors_list else sectors_list
 
     return moves_from_sort_rule(
         model=model,
         sorting_rule_by_sector=lambda *args: sort_by_content(*args)[::-1],
         scope=scope,
+        sectors_list=sectors_list,
+        percentage_change=percentage_change,
         reloc=reloc,
         scenar_stressors=scenar_stressors,
         # increase_french_import=increase_french_import,
@@ -415,7 +440,10 @@ def scenar_worst_final_demand(model: Model, reloc: bool = False) -> pymrio.IOSys
 ### PREFERENCE SCENARIOS ###
 
 
-def scenar_pref(model, allies: List[str]=ALLIES, reloc: bool = False) -> pymrio.IOSystem:
+def scenar_pref(model, allies: List[str]=ALLIES, reloc: bool = False,
+        percentage_change: float=None, # Nouvel argument pour définir le pourcentage d'importation à réallouer pour le secteur en cours
+        sectors_list: list = None # Nouvel argument pour pouvoir définir une liste de secteurs particuliers où appliquer un scénario
+        ) -> pymrio.IOSystem:
     """Finds imports reallocation in order to trade as much as possible with the allies
 
     Args:
@@ -438,17 +466,29 @@ def scenar_pref(model, allies: List[str]=ALLIES, reloc: bool = False) -> pymrio.
 
     new_Z = model.iot.Z.copy()
     new_Y = model.iot.Y.copy()
-    new_Z["FR"] = new_Z["FR"] * 0
-    new_Y["FR"] = new_Y["FR"] * 0
   
     
 
 
-
-    sectors = model.sectors
+    sectors = model.sectors if not sectors_list else sectors_list
+    
+    new_Z.loc[(slice(None), sectors), ("FR", slice(None))] = new_Z.loc[(slice(None), sectors), ("FR", slice(None))] * 0
+    new_Y.loc[(slice(None), sectors), ("FR", slice(None))] = new_Y.loc[(slice(None), sectors), ("FR", slice(None))] * 0
 
     for sector in sectors:
-
+        # french total importations demand for each sector / final demand
+        inter_imports = model.iot.Z["FR"].drop("FR", level=0).groupby(level=1).sum().loc[sector]
+        final_imports = model.iot.Y["FR"].drop("FR", level=0).groupby(level=1).sum().loc[sector]
+        inter_imports_before_change = inter_imports.copy()
+        final_imports_before_change = final_imports.copy()
+        
+        # We compute the delta of importations
+        inter_imports *= (1 + percentage_change/100)
+        import_change_inter = inter_imports - inter_imports_before_change
+        final_imports *= (1 + percentage_change/100)
+        import_change_final = final_imports - final_imports_before_change
+        
+        
         ## overall trade related with sector
         sector_exports_Z = model.iot.Z.loc[(regions, sector), :].sum(axis=0, level=0)
         sector_exports_Y = model.iot.Y.loc[(regions, sector), :].sum(axis=0, level=0)
@@ -458,13 +498,14 @@ def scenar_pref(model, allies: List[str]=ALLIES, reloc: bool = False) -> pymrio.
 
         ## french importations
         sector_imports_FR_Z = sector_exports_Z["FR"]
-        sector_imports_FR_Y = sector_exports_Y["FR"]
+        sector_imports_FR_Y = sector_exports_Y["FR"]            
+            
         sector_imports_FR_nonallies_Z = sector_imports_FR_Z.drop(allies).sum()
         sector_imports_FR_nonallies_Y = sector_imports_FR_Y.drop(allies).sum()
         total_imports_FR_nonallies = (
             sector_imports_FR_nonallies_Z.sum() + sector_imports_FR_nonallies_Y.sum()
-        )
-
+        ) * (1 + percentage_change/100)
+        
         ## allies' exportation capacities
         allies_export_except_FR = (
             sector_exports_by_region.loc[allies].drop(columns=["FR"]).sum(axis=1)
@@ -503,11 +544,11 @@ def scenar_pref(model, allies: List[str]=ALLIES, reloc: bool = False) -> pymrio.
                 if reg in allies:
                     new_Z.loc[(reg, sector), ("FR", slice(None))] = (
                         sector_imports_FR_Z.loc[reg]
-                        + coef_Z * allies_export_capacity[reg]
+                        + coef_Z * allies_export_capacity[reg] if not percentage_change else sector_imports_FR_Z.loc[reg] + coef_Z * allies_export_capacity[reg] * (1 + percentage_change/100)
                     ).values
                     new_Y.loc[(reg, sector), ("FR", slice(None))] = (
                         sector_imports_FR_Y.loc[reg]
-                        + coef_Y * allies_export_capacity[reg]
+                        + coef_Y * allies_export_capacity[reg] if not percentage_change else sector_imports_FR_Y.loc[reg] + coef_Y * allies_export_capacity[reg] * (1 + percentage_change/100)
                     ).values
         else:
             coef_allies_Z = 1 + (
@@ -535,26 +576,38 @@ def scenar_pref(model, allies: List[str]=ALLIES, reloc: bool = False) -> pymrio.
             for reg in regions:
                 if reg not in allies:
                     new_Z.loc[(reg, sector), ("FR", slice(None))] = (
-                        coef_nonallies * sector_imports_FR_Z.loc[reg]
+                        coef_nonallies * sector_imports_FR_Z.loc[reg] if not percentage_change else coef_nonallies * sector_imports_FR_2.loc[reg] * (1 + percentage_change/100)
                     ).values
                     new_Y.loc[(reg, sector), ("FR", slice(None))] = (
-                        coef_nonallies * sector_imports_FR_Y.loc[reg]
+                        coef_nonallies * sector_imports_FR_Y.loc[reg] if not percentage_change else coef_nonallies * sector_imports_FR_Y.loc[reg] * (1 + percentage_change/100)
                     ).values
                 else:
                     new_Z.loc[(reg, sector), ("FR", slice(None))] = (
-                        coef_allies_Z.loc[reg] * sector_imports_FR_Z.loc[reg]
+                        coef_allies_Z.loc[reg] * sector_imports_FR_Z.loc[reg] if not percentage_change else coef_allies_Z.loc[reg] * sector_imports_FR_Z.loc[reg] * (1 + percentage_change/100)
                     ).values
                     new_Y.loc[(reg, sector), ("FR", slice(None))] = (
-                        coef_allies_Y.loc[reg] * sector_imports_FR_Y.loc[reg]
+                        coef_allies_Y.loc[reg] * sector_imports_FR_Y.loc[reg] if not percentage_change else coef_allies_Y.loc[reg] * sector_imports_FR_Y.loc[reg] * (1 + percentage_change/100)
                     ).values
 
-    ## process autoproduction
-    new_Z.loc[("FR", slice(None)), ("FR", slice(None))] += model.iot.Z.loc[
-        ("FR", slice(None)), ("FR", slice(None))
-    ].values
-    new_Y.loc[("FR", slice(None)), ("FR", slice(None))] += model.iot.Y.loc[
-        ("FR", slice(None)), ("FR", slice(None))
-    ].values
+        ## process autoproduction
+        new_Z.loc[("FR", sector), ("FR", slice(None))] += model.iot.Z.loc[
+            ("FR", sector), ("FR", slice(None))
+        ].values
+        new_Y.loc[("FR", sector), ("FR", slice(None))] += model.iot.Y.loc[
+            ("FR", sector), ("FR", slice(None))
+        ].values
+        
+        new_Z.loc[("FR", sector), ("FR", slice(None))] -= import_change_inter
+        new_Y.loc[("FR", sector), ("FR", slice(None))] -= import_change_final
+    
+    for sector in model.sectors:
+        if sector not in sectors:
+            new_Z.loc[("FR", sector), ("FR", slice(None))] += model.iot.Z.loc[
+                ("FR", sector), ("FR", slice(None))
+            ].values
+            new_Y.loc[("FR", sector), ("FR", slice(None))] += model.iot.Y.loc[
+                ("FR", sector), ("FR", slice(None))
+            ].values
     
     
     
@@ -646,6 +699,128 @@ def scenar_dummy(model, reloc: bool = False) -> pymrio.IOSystem:
     """
     
     return model.iot.copy()
+
+
+#ICI
+### IMPORTATION SHIFT SCENARIO /!\ Il pourrait y avoir un problème en cas de demande d'importation suppérieure à la capacité d'un pays, il faudrait peut-être reprendre le code de scenar_pref dans cette fonction ?
+
+def scenar_importation_shift(model: Model, percentage_change: float=None, sectors_list: list = None, reloc: bool=False) -> pymrio.IOSystem:
+    
+    """Imports reallocation in order to shift French importations
+
+    Args:
+        model (Model): object Model defined in model.py
+        percentage_change (float, mandatory): rate of importation shift, balanced change from importations to autoconsumption
+        reloc (bool, optional): True if relocation is allowed. Defaults to False.
+        sectors_list (list, optional): list of sectors where the scenario applies
+        
+    Returns:
+        iot
+    """
+    
+    if reloc:
+        regions = model.regions
+    else:
+        regions=[region for region in model.regions if region!="FR"]  # remove FR
+        
+    sectors = model.sectors if not sectors_list else sectors_list
+    
+    new_Z = model.iot.Z.copy()
+    new_Y = model.iot.Y.copy()
+      
+    new_Z.loc[(slice(None), sectors), ("FR", slice(None))] = new_Z.loc[(slice(None), sectors), ("FR", slice(None))] * 0
+    new_Y.loc[(slice(None), sectors), ("FR", slice(None))] = new_Y.loc[(slice(None), sectors), ("FR", slice(None))] * 0
+
+    for sector in sectors:
+        # french total importations demand for each sector / final demand
+        inter_imports = model.iot.Z["FR"].drop("FR", level=0).groupby(level=1).sum().loc[sector]
+        final_imports = model.iot.Y["FR"].drop("FR", level=0).groupby(level=1).sum().loc[sector]
+        inter_imports_before_change = inter_imports.copy()
+        final_imports_before_change = final_imports.copy()
+        
+        # We compute the delta of importations
+        inter_imports *= (1 + percentage_change/100)
+        import_change_inter = inter_imports - inter_imports_before_change
+        final_imports *= (1 + percentage_change/100)
+        import_change_final = final_imports - final_imports_before_change
+
+        
+        ## overall trade related with sector
+        sector_exports_Z = model.iot.Z.loc[(regions, sector), :].sum(axis=0, level=0)
+        sector_exports_Y = model.iot.Y.loc[(regions, sector), :].sum(axis=0, level=0)
+        sector_exports_by_region = sector_exports_Z.sum(
+            axis=1, level=0
+        ) + sector_exports_Y.sum(axis=1, level=0)
+
+        ## french importations
+        sector_imports_FR_Z = sector_exports_Z["FR"]
+        sector_imports_FR_Y = sector_exports_Y["FR"]
+        
+        inter_imports_before_change = sector_imports_FR_Z.copy()
+        final_imports_before_change = sector_imports_FR_Y.copy()
+        
+        ## regions' exportation capacities
+        regions_export_except_FR = (
+            sector_exports_by_region.loc[regions].drop(columns=["FR"]).sum(axis=1)
+        )
+        regions_autoexport = pd.Series(
+            np.diagonal(sector_exports_by_region.loc[regions, regions]),
+            index=regions,
+        )
+        regions_export_capacity = regions_export_except_FR.add(
+            -regions_autoexport.drop("FR", errors="ignore"), fill_value=0
+        )  # .add() handles the possible values of reloc
+        regions_total_export_capacity = regions_export_capacity.sum()
+
+        ## reallocations
+        for reg in regions:
+            new_Z.loc[(reg, sector), ("FR", slice(None))] = (
+    sector_imports_FR_Z.loc[reg]
+    * (1 + percentage_change/100)).values
+
+            new_Y.loc[(reg, sector), ("FR", slice(None))] = (
+    sector_imports_FR_Y.loc[reg]
+    * (1 + percentage_change/100)).values
+            
+
+        ## process autoproduction
+        new_Z.loc[("FR", sector), ("FR", slice(None))] += model.iot.Z.loc[
+            ("FR", sector), ("FR", slice(None))
+        ].values
+        new_Y.loc[("FR", sector), ("FR", slice(None))] += model.iot.Y.loc[
+            ("FR", sector), ("FR", slice(None))
+        ].values
+        
+        new_Z.loc[("FR", sector), ("FR", slice(None))] -= import_change_inter
+        new_Y.loc[("FR", sector), ("FR", slice(None))] -= import_change_final
+    
+    for sector in model.sectors:
+        if sector not in sectors:
+            new_Z.loc[("FR", sector), ("FR", slice(None))] += model.iot.Z.loc[
+                ("FR", sector), ("FR", slice(None))
+            ].values
+            new_Y.loc[("FR", sector), ("FR", slice(None))] += model.iot.Y.loc[
+                ("FR", sector), ("FR", slice(None))
+            ].values
+    
+    new_A=pymrio.tools.iomath.calc_A(new_Z,model.iot.x)
+    new_A=new_A.fillna(0)  # convert the changes we have one on Z to A, as it is the correct way to implement them
+    # integrate into mrio model 
+    iot=model.iot.copy()
+    iot.reset_to_flows()
+    iot.L=None
+    iot.A=new_A
+    iot.x=None
+    iot.Z=None
+    iot.Y=new_Y
+    iot.calc_all()
+    
+    return iot
+
+
+
+
+
 
 ### IMACLIM SCENARIOS
 
@@ -857,6 +1032,8 @@ DICT_SCENARIOS = {
     #"tradewar_china": scenar_tradewar_china,
     "tradewar_region":scenar_tradewar,
     "dummy":scenar_dummy,
+    "importation_shift": scenar_importation_shift,
+    "importation_shift_v0": scenar_importation_shift_v0,
     "emissivity_IMACLIM":emissivity_imaclim,
     "technical_change_IMACLIM":tech_change_imaclim,
     #"production_change_IMACLIM":production_change_imaclim,

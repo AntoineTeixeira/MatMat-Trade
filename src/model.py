@@ -497,7 +497,7 @@ class Counterfactual:
         self,
         name: str,
         model: Model,
-        scenar_function: Callable[[Model, bool], Tuple[pd.DataFrame]],
+        scenar_function: Callable[[Model, bool, List[str], float], Tuple[pd.DataFrame]],
         **kwargs
     ):
         """Inits Counterfactual class
@@ -511,6 +511,8 @@ class Counterfactual:
 
         self.name = name
         self.reloc=kwargs.get("reloc",False)
+        self.sectors_list=kwargs.get("sectors_list",None)
+        self.percentage_change=kwargs.get("percentage_change",None)
 
         self.scenar_stressors = kwargs.get("scenar_stressors", None)
 

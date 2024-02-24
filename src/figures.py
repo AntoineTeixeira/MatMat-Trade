@@ -6,9 +6,6 @@ import pandas as pd
 import pathlib
 import seaborn as sns
 from unidecode import unidecode
-import plotly.express as px
-import pymrio
-import kaleido
 
 from src.settings import COLORS, COLORS_NO_FR
 from src.utils import (
@@ -20,16 +17,7 @@ from src.utils import (
     aggregate_avg_simple_index,
     build_description,
     footprint_extractor,
-    get_total_imports_region,
-    get_very_detailed_emissions,
-    diagonalize_columns_to_sectors,
-    find_stressor_unit
 )
-from src.stressors import GHG_STRESSOR_NAMES
-# from src.stressors import MATERIAL_STRESSOR_NAMES
-# from src.stressors import GHG_AND_MATERIALS_PARAM
-# from src.stressors import STRESSOR_DICT_GHG_MAT
-from src.stressors import STRESSORS_DICT_DEF#, ALL_STRESSORS
 
 
 ### CARBON FOOTPRINT ###
@@ -39,7 +27,6 @@ def plot_footprint(
     model,
     region: str = "FR",
     counterfactual_name: str = None,
-    stressors_to_display: str = None,
     title: str = None,
 ) -> None:
     """Plots region's footprint (D_pba-D_exp+D_imp+F_Y)
@@ -56,15 +43,15 @@ def plot_footprint(
         counterfactual = model.counterfactuals[counterfactual_name]
 
     carbon_footprint = pd.DataFrame(
-        footprint_extractor(model=counterfactual, region=region, stressor_list=STRESSORS_DICT_DEF[stressors_to_display]['dict']), index=[""]
+        footprint_extractor(model=counterfactual, region=region), index=[""]
     )
 
     carbon_footprint.plot.barh(stacked=True, fontsize=17, figsize=(10, 5), rot=0)
 
     if title is None:
-        title = f"Empreinte en {stressors_to_display} de la région {region}"
+        title = f"Empreinte en {model.stressor_name} de la région {region}"
     plt.title(title, size=17, fontweight="bold")
-    plt.xlabel(find_stressor_unit(stressors_to_display), size=15)
+    plt.xlabel(model.stressor_unit, size=15)
     plt.grid(visible=True)
     plt.legend(prop={"size": 15})
     plt.text(
@@ -73,29 +60,25 @@ def plot_footprint(
         build_description(model=model, counterfactual_name=counterfactual_name),
         transform=plt.gcf().transFigure,
     )
-    # plt.axis([-200000, 5E6,-0.5,0.5])
-    if model.save_figures:
-        plt.savefig(counterfactual.figures_dir / f"empreinte_{region}.png")
+
+    plt.savefig(counterfactual.figures_dir / f"empreinte_{region}.png")
 
 
 def plot_footprint_FR(
     model,
     counterfactual_name: str = None,
-    stressors_to_display: str = None
 ) -> None:
     """Plots french footprint (D_pba-D_exp+D_imp+F_Y)
 
     Args:
         model (Model): object Model defined in model.py
         counterfactual_name (str, optional): name of the counterfactual in model.counterfactuals. None for the reference. Defaults to None.
-        stressors_to_display (str, mandatory): name of the stressors to plot, to be defined in variable STRESSORS_DICT_DEF in stressors.py.
     """
     plot_footprint(
         model=model,
         region="FR",
         counterfactual_name=counterfactual_name,
-        stressors_to_display=stressors_to_display,
-        title=f"Empreinte en {stressors_to_display} de la France"
+        title=f"Empreinte en {model.stressor_name} de la France",
     )
 
 
@@ -105,15 +88,13 @@ def plot_footprint_FR(
 def plot_stressor_content_heatmap(
     model,
     counterfactual_name: str = None,
-    stressors_to_display: str = None,
     prod: bool = False,
 ) -> None:
-    """Plots the content in chosen stressor(s) of each sector for each region in a heatmap
+    """Plots the content in stressors of each sector for each region in a heatmap
 
     Args:
         model (Model): object Model defined in model.py
         counterfactual_name (str, optional): name of the counterfactual in model.counterfactuals. None for the reference. Defaults to None.
-        stressors_to_display (str, mandatory): name of the stressors to plot, to be defined in variable STRESSORS_DICT_DEF in stressors.py.
         prod (bool, optional): True to focus on production values, otherwise focus on consumption values. Defaults to False.
     """
     if counterfactual_name is None:
@@ -123,9 +104,9 @@ def plot_stressor_content_heatmap(
     sectors = model.agg_sectors
     regions = model.agg_regions
     if prod:
-        title = f"Intensité de la production en {stressors_to_display}"
+        title = f"Intensité de la production en {model.stressor_name}"
         activity = "production"
-        S = counterfactual.iot.stressor_extension.S.loc[STRESSORS_DICT_DEF[stressors_to_display]['dict']].sum()
+        S = counterfactual.iot.stressor_extension.S.sum()
         x = counterfactual.iot.x["indout"]
         S_pond = S.multiply(x)
         S_pond_agg = aggregate_sum_axis(
@@ -149,9 +130,9 @@ def plot_stressor_content_heatmap(
         )
         to_display = S_mean_pond_agg.unstack().T
     else:
-        title = f"Contenu du bien importé en {stressors_to_display}"
+        title = f"Contenu du bien importé en {model.stressor_name}"
         activity = "consumption"
-        M = counterfactual.iot.stressor_extension.M.loc[STRESSORS_DICT_DEF[stressors_to_display]['dict']].sum()
+        M = counterfactual.iot.stressor_extension.M.sum()
         y = counterfactual.iot.Y.sum(axis=1)
         M_pond = M.multiply(y)
         M_pond_agg = aggregate_sum_axis(
@@ -198,16 +179,14 @@ def plot_stressor_content_heatmap(
         build_description(model=model, counterfactual_name=counterfactual_name),
         transform=plt.gcf().transFigure,
     )
-    if model.save_figures:
-        plt.savefig(counterfactual.figures_dir / ("content_heatmap_" + activity))
+    plt.savefig(model.figures_dir / ("content_heatmap_" + activity))
 
 
-def plot_stressor_content_production(model, counterfactual_name: str = None, stressors_to_display: str = None) -> None:
-    """Compares the content in chosen stressor(s) of each region for each sector
+def plot_stressor_content_production(model, counterfactual_name: str = None) -> None:
+    """Compares the content in stressors of each region for each sector
 
     Args:
         model (Model): object Model defined in model.py
-        stressors_to_display (str, mandatory): name of the stressors to plot, to be defined in variable STRESSORS_DICT_DEF in stressors.py.
         counterfactual_name (str, optional): name of the counterfactual in model.counterfactuals. None for the reference. Defaults to None.
     """
     if counterfactual_name is None:
@@ -215,7 +194,7 @@ def plot_stressor_content_production(model, counterfactual_name: str = None, str
     else:
         counterfactual = model.counterfactuals[counterfactual_name]
 
-    S_unstacked = (counterfactual.iot.stressor_extension.S.loc[STRESSORS_DICT_DEF[stressors_to_display]['dict']]).sum().unstack().T
+    S_unstacked = (counterfactual.iot.stressor_extension.S).sum().unstack().T
 
     S_unstacked = aggregate_avg_simple_index(
         df=S_unstacked,
@@ -232,11 +211,11 @@ def plot_stressor_content_production(model, counterfactual_name: str = None, str
 
     S_unstacked.plot.barh(fontsize=17, figsize=(12, 8), color=COLORS)
     plt.title(
-        f"Contenu de la production en {stressors_to_display}",
+        f"Contenu de la production en {model.stressor_name}",
         size=17,
         fontweight="bold",
     )
-    plt.xlabel(f"{find_stressor_unit(stressors_to_display)} / M€", size=15)
+    plt.xlabel(f"{model.stressor_unit} / M€", size=15)
     plt.tight_layout()
     plt.grid(visible=True)
     plt.legend(prop={"size": 15})
@@ -246,8 +225,7 @@ def plot_stressor_content_production(model, counterfactual_name: str = None, str
         build_description(model=model, counterfactual_name=counterfactual_name),
         transform=plt.gcf().transFigure,
     )
-    if model.save_figures:
-        plt.savefig(counterfactual.figures_dir / "content_hbar_production.png")
+    plt.savefig(model.figures_dir / "content_hbar_production.png")
 
 
 ### SCENARIO COMPARISON ###
@@ -432,14 +410,10 @@ def plot_df_synthesis(
     reference_df: pd.Series,
     counterfactual_df: pd.Series,
     account_name: str,
-    account_description: str,
     account_unit: str,
     scenario_name: str,
     output_dir: pathlib.PosixPath,
     description: str,
-    save_figures: bool,
-    stressors_to_plot: str,
-    plot_method: str,
 ) -> None:
     """Plots some figures for a given counterfactual
 
@@ -460,96 +434,81 @@ def plot_df_synthesis(
         reference_df.index.get_level_values(level=1).drop_duplicates()
     )  # same with .get_sectors()
 
-    # account_name = (
-    #     account_name[0].upper() + account_name[1:]
-    # )  # doesn't use .capitalize() in order to preserve capital letters in the middle
-    # account_name_file = unidecode(account_name.lower().replace(" ", "_"))
-    # current_dir = output_dir / (scenario_name + "__" + account_name_file)
-    current_dir = output_dir / (scenario_name + "__" + account_name)
+    account_name = (
+        account_name[0].upper() + account_name[1:]
+    )  # doesn't use .capitalize() in order to preserve capital letters in the middle
+    account_name_file = unidecode(account_name.lower().replace(" ", "_"))
+    current_dir = output_dir / (scenario_name + "__" + account_name_file)
 
-    # if not os.path.isdir(current_dir):
-    #     os.mkdir(current_dir)  # can overwrite existing files
-    current_dir.mkdir(exist_ok = True, parents = True)
+    if not os.path.isdir(current_dir):
+        os.mkdir(current_dir)  # can overwrite existing files
 
-    # preliminary aggregation
+    # plot reference importations
     ref_conso_by_sector_FR = reference_df
-    # ref_impacts_by_region_FR = ref_conso_by_sector_FR.drop("FR", level=0).sum(level=0)
-    ref_impacts_by_region_FR = reference_df.sum(level=0)
+    ref_imports_by_region_FR = ref_conso_by_sector_FR.drop("FR", level=0).sum(level=0)
 
-    scen_conso_by_sector_FR = counterfactual_df
-    # scen_impacts_by_region_FR = scen_conso_by_sector_FR.drop("FR", level=0).sum(level=0)
-    scen_impacts_by_region_FR = scen_conso_by_sector_FR.sum(level=0)
-
-    # xmax = max(max(reference_df), max(counterfactual_df.values))*1.2
-    xmax = max(max(ref_impacts_by_region_FR), max(scen_impacts_by_region_FR.values))*1.2
-    
-    
-    # # plot reference impacts
-    # ref_impacts_by_region_FR.T.plot.barh(
-    #     stacked=True, fontsize=17, color=COLORS, figsize=(12, 5)
-    # )
-    # plt.title(f"{account_description} (référence)", size=17, fontweight="bold")
-    # plt.xlabel(account_unit, size=15)
-    # plt.tight_layout()
-    # plt.grid(visible=True)
-    # plt.text(
-    #     0.13,
-    #     -0.2,
-    #     description,
-    #     transform=plt.gcf().transFigure,
-    # )
-    # plt.axis([0,xmax, -1, len(regions)])
-    # plt.savefig(current_dir / f"{account_name}_reference.png")
-    # plt.close()
-
-    # # plot counterfactual impacts
-    # scen_impacts_by_region_FR.T.plot.barh(
-    #     stacked=True, fontsize=17, color=COLORS, figsize=(12, 5)
-    # )
-    # plt.title(
-    #     f"{account_description} (scénario {scenario_name})",
-    #     size=17,
-    #     fontweight="bold",
-    # )
-    # plt.xlabel(account_unit, size=15)
-    # plt.tight_layout()
-    # plt.grid(visible=True)
-    # plt.text(
-    #     0.13,
-    #     -0.2,
-    #     description,
-    #     transform=plt.gcf().transFigure,
-    # )
-    # plt.axis([0,xmax,-1, len(regions)])
-    # # ax.set(xlim=(0,xmax))
-    # plt.savefig(current_dir / f"{account_name}_{scenario_name}.png")
-
-    # compare counterfactual and reference impacts
-    compare_impacts_by_region_FR = pd.DataFrame(
-        {
-            "Référence": ref_impacts_by_region_FR,
-            f"Scénario": scen_impacts_by_region_FR,
-            # f"Scénario {scenario_name}": scen_impacts_by_region_FR,
-        }
+    ref_imports_by_region_FR.T.plot.barh(
+        stacked=True, fontsize=17, color=COLORS_NO_FR, figsize=(12, 5)
     )
-    compare_impacts_by_region_FR.T.plot.barh(
-        stacked=True, fontsize=17, figsize=(12, 8), color=COLORS
-    )
-    plt.title(f"{account_description} (total)", size=17, fontweight="bold")
+    plt.title(f"{account_name} (référence)", size=17, fontweight="bold")
     plt.xlabel(account_unit, size=15)
     plt.tight_layout()
     plt.grid(visible=True)
-    plt.legend(prop={"size": 12}, bbox_to_anchor = (1,0.75))
     plt.text(
         0.13,
-        -0.1,
+        -0.2,
         description,
         transform=plt.gcf().transFigure,
     )
-    if save_figures:
-        plt.savefig(current_dir / f"{account_name}_{stressors_to_plot}_total.png",  bbox_inches='tight')
+    plt.savefig(current_dir / "reference.png")
+    plt.close()
 
-    # compare each region for each sector for the reference and the counterfactual
+    # plot counterfactual importations
+    scen_conso_by_sector_FR = counterfactual_df
+    scen_imports_by_region_FR = scen_conso_by_sector_FR.drop("FR", level=0).sum(level=0)
+
+    scen_imports_by_region_FR.T.plot.barh(
+        stacked=True, fontsize=17, color=COLORS_NO_FR, figsize=(12, 5)
+    )
+    plt.title(
+        f"{account_name} (scénario {scenario_name})",
+        size=17,
+        fontweight="bold",
+    )
+    plt.xlabel(account_unit, size=15)
+    plt.grid(visible=True)
+    plt.text(
+        0.13,
+        -0.2,
+        description,
+        transform=plt.gcf().transFigure,
+    )
+    plt.savefig(current_dir / f"{scenario_name}.png")
+
+    # compare counterfactual and reference importations
+    compare_imports_by_region_FR = pd.DataFrame(
+        {
+            "Référence": ref_imports_by_region_FR,
+            f"Scénario {scenario_name}": scen_imports_by_region_FR,
+        }
+    )
+    compare_imports_by_region_FR.T.plot.barh(
+        stacked=True, fontsize=17, figsize=(12, 8), color=COLORS_NO_FR
+    )
+    plt.title(f"{account_name} (comparaison)", size=17, fontweight="bold")
+    plt.xlabel(account_unit, size=15)
+    plt.tight_layout()
+    plt.grid(visible=True)
+    plt.legend(prop={"size": 12})
+    plt.text(
+        0.13,
+        -0.2,
+        description,
+        transform=plt.gcf().transFigure,
+    )
+    plt.savefig(current_dir / f"comparison_by_region.png")
+
+    # compare each region for each importation sector for the reference and the counterfactual
 
     def grouped_and_stacked_plot(
         df_ref: pd.DataFrame,
@@ -557,7 +516,6 @@ def plot_df_synthesis(
         percent_x_scale: bool,
         plot_title: str,
         plot_filename: str,
-        save_figures: bool,
     ) -> None:
         """Nested function. Plots a grouped stacked horizontal bar plot.
 
@@ -569,19 +527,18 @@ def plot_df_synthesis(
             plot_filename (str): to save the figure
         """
         df_to_display = pd.DataFrame(
-            columns=regions[0:],
+            columns=regions[1:],
             index=pd.MultiIndex.from_arrays(
                 [
                     sum([2 * [sec] for sec in sectors], []),
-                    len(sectors) * ["Référence", f"Scénario"],
-                    # len(sectors) * ["Référence", f"Scénario {scenario_name}"],
+                    len(sectors) * ["Référence", f"Scénario {scenario_name}"],
                 ],
                 names=("sector", "scenario"),
             ),
         )
         for sec in sectors:
             df_to_display.loc[(sec, "Référence"), :] = df_ref.loc[(slice(None), sec)]
-            df_to_display.loc[(sec, f"Scénario"), :] = df_scen.loc[
+            df_to_display.loc[(sec, f"Scénario {scenario_name}"), :] = df_scen.loc[
                 (slice(None), sec)
             ]
         fig, axes = plt.subplots(
@@ -601,7 +558,7 @@ def plot_df_synthesis(
                     stacked="True",
                     ax=graph[x],
                     legend=False,
-                    color=COLORS,
+                    color=COLORS_NO_FR,
                 )
                 .set_ylabel(
                     x,
@@ -618,32 +575,29 @@ def plot_df_synthesis(
         plt.tight_layout()
         if not percent_x_scale:
             plt.xlabel(account_unit, size=15)
-        else:
-            plt.xlabel(f'% of total {plot_method.replace("by_", "per ")}', size=15)
-        #plt.legend(ncol=3, loc="lower left", bbox_to_anchor=(-0.35, -4.5))
-        plt.legend(ncol=3, loc="lower left", bbox_to_anchor=(0.5 if plot_method=='by_products' else 0.5, -5 if plot_method=='by_products' else -2))
-
+        plt.legend(ncol=3, loc="lower left", bbox_to_anchor=(-0.35, -4.5))
         plt.text(
-            0.05 if plot_method=='by_products' else 0.13,
-            -0.15 if plot_method=='by_products' else -0.15,
+            0.13,
+            -0.3,
             description,
             transform=plt.gcf().transFigure,
         )
-        if save_figures:
-            plt.savefig(current_dir / plot_filename, bbox_inches='tight')
+        plt.savefig(current_dir / plot_filename)
         plt.show()
 
     try:
         df_ref_parts = (
             (
-                ref_conso_by_sector_FR.divide(ref_conso_by_sector_FR.sum(level=1), level=1)
+                ref_conso_by_sector_FR.drop("FR", level=0)
+                / ref_conso_by_sector_FR.drop("FR", level=0).sum(level=1)
             )
             .replace([np.inf, -np.inf], np.nan)
             .fillna(0)
         )
         df_scen_parts = (
             (
-                scen_conso_by_sector_FR.divide(scen_conso_by_sector_FR.sum(level=1), level=1)
+                scen_conso_by_sector_FR.drop("FR", level=0)
+                / scen_conso_by_sector_FR.drop("FR", level=0).sum(level=1)
             )
             .replace([np.inf, -np.inf], np.nan)
             .fillna(0)
@@ -652,20 +606,19 @@ def plot_df_synthesis(
             df_ref_parts,
             df_scen_parts,
             True,
-            f"{account_description}",
-            f"{account_name}_{stressors_to_plot}_{plot_method}_in_relative.png",
-            save_figures
+            f"{account_name}",
+            f"comparison_parts_region_sector.png",
         )
     except ValueError:
         pass  # ignore substressors plot, may be improved
 
     df_ref_values = (
-        ref_conso_by_sector_FR
+        ref_conso_by_sector_FR.drop("FR", level=0)
         .replace([np.inf, -np.inf], np.nan)
         .fillna(0)
     )
     df_scen_values = (
-        scen_conso_by_sector_FR
+        scen_conso_by_sector_FR.drop("FR", level=0)
         .replace([np.inf, -np.inf], np.nan)
         .fillna(0)
     )
@@ -673,9 +626,8 @@ def plot_df_synthesis(
         df_ref_values,
         df_scen_values,
         False,
-        f"{account_description}",
-        f"{account_name}_{stressors_to_plot}_{plot_method}_in_absolute.png",
-        save_figures
+        f"{account_name}",
+        f"comparison_values_region_sector.png",
     )
 
 
@@ -722,50 +674,37 @@ def plot_trade_synthesis(
 
     reference_trade = ref_Y["FR"].sum(axis=1) + ref_Z["FR"].sum(axis=1)
     counterfactual_trade = count_Y["FR"].sum(axis=1) + count_Z["FR"].sum(axis=1)
-    
-    # reference_trade.drop('FR', axis=0, level=0, inplace=True)
-    # counterfactual_trade.drop('FR', axis=0, level=0, inplace=True)
-    reference_trade.loc['FR'] = 0
-    counterfactual_trade.loc['FR'] = 0
-    
+
     plot_df_synthesis(
         reference_df=reference_trade,
         counterfactual_df=counterfactual_trade,
-        account_name="trade",
-        account_description="importations françaises",
+        account_name="importations françaises",
         account_unit="M€",
         scenario_name=counterfactual_name,
         output_dir=counterfactual.figures_dir,
         description=build_description(
             model=model, counterfactual_name=counterfactual_name
         ),
-        save_figures=model.save_figures,
-        stressors_to_plot='',
-        plot_method='by_products'
     )
 
 
 def plot_stressor_synthesis(
     model,
     counterfactual_name: str,
-    stressors_to_display: str,
 ) -> None:
     """Plots the french emissions of stressors by sector for a given counterfactual
 
     Args:
         model (Model): object Model defined in model.py
         counterfactual_name (str): name of the counterfactual in model.counterfactuals
-        stressors_to_display (str, mandatory): name of the stressors to plot, to be defined in variable STRESSORS_DICT_DEF in stressors.py.
     """
     counterfactual = model.counterfactuals[counterfactual_name]
 
-    stressors_to_plot = STRESSORS_DICT_DEF[stressors_to_display]["name_EN"]
-
     emissions_types = {
-        "D_cba": f"empreinte de la France en {stressors_to_display}",
-        "D_pba": f"impact territorial de la France en {stressors_to_display}",
-        "D_imp": f"empreinte importée par la France en {stressors_to_display}",
-        "D_exp": f"impact exporté par la France en {stressors_to_display}",
+        "D_cba": f"empreinte de la France en {model.stressor_name}",
+        "D_pba": f"émissions territoriales de la France en {model.stressor_name}",
+        "D_imp": f"émissions importées par la France en {model.stressor_name}",
+        "D_exp": f"émissions exportées par la France en {model.stressor_name}",
     }
 
     for name, description in emissions_types.items():
@@ -785,47 +724,39 @@ def plot_stressor_synthesis(
             reverse_mapper_1=model.rev_sectors_mapper,
         )
 
-        reference_trade = ref_df["FR"].swaplevel(0,1, axis=0).loc[STRESSORS_DICT_DEF[stressors_to_display]['dict']].swaplevel(0,1, axis = 0).sum(level=0).stack()
-        counterfactual_trade = count_df["FR"].swaplevel(0,1, axis=0).loc[STRESSORS_DICT_DEF[stressors_to_display]['dict']].swaplevel(0,1, axis = 0).sum(level=0).stack()
+        reference_trade = ref_df["FR"].sum(level=0).stack()
+        counterfactual_trade = count_df["FR"].sum(level=0).stack()
 
         plot_df_synthesis(
             reference_df=reference_trade,
             counterfactual_df=counterfactual_trade,
-            account_name=name,
-            account_description=description,
-            account_unit=find_stressor_unit(stressors_to_display),
+            account_name=description,
+            account_unit=model.stressor_unit,
             scenario_name=counterfactual_name,
             output_dir=counterfactual.figures_dir,
             description=build_description(
                 model=model, counterfactual_name=counterfactual_name
             ),
-            save_figures=model.save_figures,
-            stressors_to_plot=stressors_to_plot,
-            plot_method='by_products'
         )
 
 
 def plot_substressor_synthesis(
     model,
     counterfactual_name: str,
-    stressors_to_display: str,
 ) -> None:
     """Plots the french emissions per substressor for a given counterfactual
 
     Args:
         model (Model): object Model defined in model.py
         counterfactual_name (str): name of the counterfactual in model.counterfactuals
-        stressors_to_display (str, mandatory): name of the stressors to plot, to be defined in variable STRESSORS_DICT_DEF in stressors.py.
     """
     counterfactual = model.counterfactuals[counterfactual_name]
-    
-    stressors_to_plot = STRESSORS_DICT_DEF[stressors_to_display]["name_EN"]
-    
+
     emissions_types = {
-        "D_cba": f"empreinte de la France en {stressors_to_display}",
-        "D_pba": f"impact territorial de la France en {stressors_to_display}",
-        "D_imp": f"empreinte importée par la France en {stressors_to_display}",
-        "D_exp": f"impact exporté par la France en {stressors_to_display}",
+        "D_cba": f"empreinte de la France en {model.stressor_name}",
+        "D_pba": f"émissions territoriales de la France en {model.stressor_name}",
+        "D_imp": f"émissions importées par la France en {model.stressor_name}",
+        "D_exp": f"émissions exportées par la France en {model.stressor_name}",
     }
 
     for name, description in emissions_types.items():
@@ -845,548 +776,17 @@ def plot_substressor_synthesis(
             reverse_mapper_1=model.rev_sectors_mapper,
         )
 
-        reference_stressor = ref_df["FR"].swaplevel(0,1, axis=0).loc[STRESSORS_DICT_DEF[stressors_to_display]['dict']].swaplevel(0,1, axis = 0).sum(axis=1)
-        counterfactual_stressor = count_df["FR"].swaplevel(0,1, axis=0).loc[STRESSORS_DICT_DEF[stressors_to_display]['dict']].swaplevel(0,1, axis = 0).sum(axis=1)
+        reference_stressor = ref_df["FR"].sum(axis=1)
+        counterfactual_stressor = count_df["FR"].sum(axis=1)
 
         plot_df_synthesis(
             reference_df=reference_stressor,
             counterfactual_df=counterfactual_stressor,
-            account_name=name,
-            account_description=description,
-            account_unit=find_stressor_unit(stressors_to_display),
+            account_name=description,
+            account_unit=model.stressor_unit,
             scenario_name=counterfactual_name,
             output_dir=counterfactual.figures_dir,
             description=build_description(
                 model=model, counterfactual_name=counterfactual_name
             ),
-            save_figures=model.save_figures,
-            stressors_to_plot=stressors_to_plot,
-            plot_method='by_stressors'
         )
-
-def plot_stressor_synthesis_comp_between_models(
-    model,
-    model_2,
-    stressors_to_display: str,
-    counterfactual_name: str=None,
-    counterfactual_name_2: str=None,
-) -> None:
-    """Plots the french emissions of stressors by sector for a given counterfactual
-
-    Args:
-        model (Model): object Model defined in model.py
-        model_k (Model): object Model defined in model.py
-    """
-    
-    stressors_to_plot = STRESSORS_DICT_DEF[stressors_to_display]["name_EN"]
-
-    if stressors_to_display == 'GES':
-        emissions_types = {
-            "D_cba": f"empreinte de la France en {model.stressor_name}",
-            "D_pba": f"émissions territoriales de la France en {model.stressor_name}",
-            "D_imp": f"émissions importées par la France en {model.stressor_name}",
-            "D_exp": f"émissions exportées par la France en {model.stressor_name}",
-        }
-    else:
-        emissions_types = {
-        "D_cba": f"empreinte de la France en {stressors_to_display}",
-        "D_pba": f"impact territorial de la France en {stressors_to_display}",
-        "D_imp": f"empreinte importée par la France en {stressors_to_display}",
-        "D_exp": f"impact exporté par la France en {stressors_to_display}",
-        }
-    
-    if counterfactual_name !=None:
-        reference = model.counterfactuals[counterfactual_name]
-    else:
-        reference = model
-   
-    if counterfactual_name_2 !=None:
-        counterfactual = model_2.counterfactuals[counterfactual_name_2]
-    else:
-        counterfactual = model_2
-    
-    
-    for name, description in emissions_types.items():
-
-        ref_df = aggregate_sum_2levels_on_axis1_level0_on_axis0(
-            df=getattr(reference.iot.stressor_extension, name),
-            new_index_0=model.new_regions_index,
-            new_index_1=model.new_sectors_index,
-            reverse_mapper_0=model.rev_regions_mapper,
-            reverse_mapper_1=model.rev_sectors_mapper,
-        )
-        count_df = aggregate_sum_2levels_on_axis1_level0_on_axis0(
-            df=getattr(counterfactual.iot.stressor_extension, name),
-            new_index_0=model_2.new_regions_index,
-            new_index_1=model_2.new_sectors_index,
-            reverse_mapper_0=model_2.rev_regions_mapper,
-            reverse_mapper_1=model_2.rev_sectors_mapper,
-        )
-
-        reference_trade = ref_df["FR"].swaplevel(0,1, axis=0).loc[STRESSORS_DICT_DEF[stressors_to_display]['dict']].swaplevel(0,1, axis = 0).sum(level=0).stack()
-        counterfactual_trade = count_df["FR"].swaplevel(0,1, axis=0).loc[STRESSORS_DICT_DEF[stressors_to_display]['dict']].swaplevel(0,1, axis = 0).sum(level=0).stack()
-
-        plot_df_synthesis(
-            reference_df=reference_trade,
-            counterfactual_df=counterfactual_trade,
-            account_name=name,
-            account_description=description,
-            account_unit=find_stressor_unit(stressors_to_display),
-            scenario_name='endo_capital',
-            output_dir=(model_2.figures_dir)/'comparaison_between_models',
-            description=build_description(
-                model=model_2, counterfactual_name=counterfactual_name_2
-            ),
-            save_figures=model_2.save_figures,
-            stressors_to_plot=stressors_to_plot,
-            plot_method='by_products'
-        )
-        
-        
-        
-def plot_sector_import_distrib(iot : pymrio.IOSystem,sectors: list,country_importing="FR",normalized_quantity=True):
-    """" (function description)
-    
-    Args:
-        variable1 (type):
-        
-    """
-    
-    emissiv_df=get_emmissiv_and_quantity(iot,country_importing)
-
-    sector_needed_emssiv=emissiv_df.loc[emissiv_df.index.get_level_values("sector").isin(sectors)].reset_index()
-
-    sector_needed_emssiv=sector_needed_emssiv.drop(index=sector_needed_emssiv.loc[sector_needed_emssiv["quantity"]==0].index)
-
-    if normalized_quantity:
-        ecdf_norm="percent"
-    else :
-        ecdf_norm=None
-
-    fig=px.ecdf(sector_needed_emssiv,x="emissivity",color="sector",y="quantity",
-                log_x=True,
-                ecdfnorm=ecdf_norm,
-                hover_name="region",
-                hover_data=["emissivity","quantity"])
-
-    fig.show()
-
-
-def plot_sector_import_distrib_full(model ,sectors: list,country_importing="FR",normalized_quantity=True,scenarios=None,stressors_to_display: str='GES',scope=3):
-    """" Plots the distribution of tradded quantities per regions of selected products regarding emissivity.
-
-    Args:
-        variable1 (type):variable description
-    """
-    
-    stressor_list = STRESSORS_DICT_DEF[stressors_to_display]['dict']
-
-    # choose to normalize or not total quantitty produced in the graph
-    if normalized_quantity:
-        ecdf_norm="percent"
-    else :
-        ecdf_norm=None
-        
-    dict_df_to_print={}
-    
-    dict_df_to_print["base"]=get_emmissiv_and_quantity(model.iot,country_importing,stressor_list=stressor_list,scope=scope)
-
-    for counterfactual in model.get_counterfactuals_list():
-        dict_df_to_print[counterfactual]=get_emmissiv_and_quantity(model.counterfactuals[counterfactual].iot,country_importing,stressor_list=stressor_list,scope=scope)
-    
-    if scenarios is None : 
-        scenarios=dict_df_to_print.keys()
-    df_to_print=pd.concat([dict_df_to_print[scenario] for scenario in scenarios],keys=scenarios,names=("scenario","region","sector"))
-    
-    sector_needed_emssiv=df_to_print.loc[df_to_print.index.get_level_values("sector").isin(sectors)].reset_index()
-
-    sector_needed_emssiv=sector_needed_emssiv.drop(index=sector_needed_emssiv.loc[sector_needed_emssiv["quantity"]==0].index)
-
-    fig=px.ecdf(sector_needed_emssiv,x="emissivity",color="sector",y="quantity",
-                log_x=True,
-                ecdfnorm=ecdf_norm,
-                hover_name="region",
-                hover_data=["emissivity"],
-                animation_frame="scenario")
-
-    fig.show()
-
-
-def get_emmissiv_and_quantity(iot,country : str ,stressor_list: list=GHG_STRESSOR_NAMES,scope=3):
-    if scope ==1:
-        emissiv_df=pd.DataFrame([iot.stressor_extension.S.loc[stressor_list].sum(),get_total_imports_region(iot,country, scope=scope)],index=["emissivity","quantity"]).T
-        # emissiv_df=pd.DataFrame([iot.stressor_extension.S.loc[stressor_list].sum(),iot.Y[region].sum(axis = 1)[region]=0]],index=["emissivity","quantity"]).T
-    else :
-        emissiv_df=pd.DataFrame([iot.stressor_extension.M.loc[stressor_list].sum(),get_total_imports_region(iot,country, scope=scope)],index=["emissivity","quantity"]).T
-        # emissiv_df=pd.DataFrame([iot.stressor_extension.M.loc[stressor_list].sum(),get_total_imports_region(iot,country, scope=scope)],index=["emissivity","quantity"]).T
-    return emissiv_df
-
-
-def get_emissions_and_quantity(iot,country : str ,stressor_list: list=GHG_STRESSOR_NAMES,scope=3):
-    emissions_and_quantity=get_emmissiv_and_quantity(iot,country=country,stressor_list=stressor_list,scope=scope)
-    emissions_and_quantity.loc[country]=0
-    emissions_and_quantity["emissions"]=emissions_and_quantity["emissivity"]*emissions_and_quantity["quantity"]
-    return emissions_and_quantity.drop("emissivity",axis=1)
-
-
-def plot_emission_location_import_distrib_full(model ,sectors: list,country_importing="FR",normalized_quantity=True,scenarios=None,stressors_to_display: str='GES',scope=3):
-    """" Plots the distribution of tradded quantities per regions of selected products regarding emissivity.
-
-    Args:
-        variable1 (type):variable description
-    """
-    
-    stressor_list = STRESSORS_DICT_DEF[stressors_to_display]['dict']
-
-    # choose to normalize or not total quantitty produced in the graph
-    if normalized_quantity:
-        ecdf_norm="percent"
-    else :
-        ecdf_norm=None
-        
-    dict_df_to_print={}
-
-    dict_df_to_print["base"]=get_local_emissions_and_quantity(model.iot,country_importing=country_importing,stressor_list=stressor_list)
-
-    for counterfactual in model.get_counterfactuals_list():
-        dict_df_to_print[counterfactual]=get_local_emissions_and_quantity(model.counterfactuals[counterfactual].iot,country_importing=country_importing,stressor_list=stressor_list)
-    
-    if scenarios is None : 
-        scenarios=dict_df_to_print.keys()
-    df_to_print=pd.concat([dict_df_to_print[scenario] for scenario in scenarios],keys=scenarios,names=("scenario","region","sector"))
-    
-    sector_needed_emssiv=df_to_print.loc[df_to_print.index.get_level_values("sector").isin(sectors)].reset_index()
-
-    sector_needed_emssiv=sector_needed_emssiv.drop(index=sector_needed_emssiv.loc[sector_needed_emssiv["quantity"]==0].index)
-
-    fig=px.ecdf(sector_needed_emssiv,x="emissivity",color="sector",y="quantity",
-                ecdfnorm=ecdf_norm,
-                hover_name="region",
-                hover_data=["emissivity"],
-                animation_frame="scenario")
-
-    fig.show()
-
-
-def get_local_emissions_and_quantity(iot, country_importing : str, stressor_list: list=GHG_STRESSOR_NAMES):
-    imports=iot.Y.sum(axis=1,level=0)*0
-    country_imports=get_total_imports_region(iot,country_importing, scope=3)
-    imports[country_importing]=country_imports
-    imports_total_diag=diagonalize_columns_to_sectors(imports)[country_importing]
-    prod_imports_diag=iot.L@imports_total_diag
-    
-    prod_imports_diag.loc[country_importing, country_importing]=0
-    
-    local_emissions=get_very_detailed_emissions(iot,stressors_groups={"extensions":stressor_list},production_diag=prod_imports_diag).loc[(slice(None),slice(None),"extensions")].sum(axis=0,level=0)
-    local_emissions=pd.DataFrame(local_emissions.to_numpy().flatten(),index=pd.MultiIndex.from_product([local_emissions.index,local_emissions.columns]))[0]
-
-    return pd.DataFrame([local_emissions,local_emissions],index=["emissivity","quantity"]).T
-
-
-
-def plot_impacts_by_location_for_one_product(
-        model,
-        sector: str,
-        country_importing="FR",
-        scenarios=None,
-        stressors_to_display: str='GES',
-        ):
-    """" Plots imported impacts by location of impacts. 
-        Impacts occuring along the entire value chain are attributed to the region(s) where there actually happened.
-    
-    Args:
-        model (Model): object Model defined in model.py
-        sector (str): imported product whose impacts will be displayed 
-        country_importing (str): importing country of the above product
-        scenarios (list of str): scenarios to display. Default to all existing counterfactuals (cf. model.get_counterfactuals_list()).
-        stressors_to_display (str): impacts to display (to be defined in variable STRESSORS_DICT_DEF in stresors.py).
-    """
-    
-    stressor_list = STRESSORS_DICT_DEF[stressors_to_display]['dict']
-    stressors_name_EN = STRESSORS_DICT_DEF[stressors_to_display]['name_EN']
-
-    dict_df_to_print={}
-
-    dict_df_to_print["base"]=get_local_emissions_and_quantity(model.iot,country_importing=country_importing,stressor_list=stressor_list)
-
-    if scenarios is None : 
-        scenarios_list = model.get_counterfactuals_list()
-    else:
-        scenarios_list = scenarios.copy()
-
-    for counterfactual in scenarios_list:
-        dict_df_to_print[counterfactual]=get_local_emissions_and_quantity(model.counterfactuals[counterfactual].iot,country_importing=country_importing,stressor_list=stressor_list)
-    
-    scenarios_list = ['base']+scenarios_list
-
-    df_to_print=pd.concat([dict_df_to_print[scenario] for scenario in scenarios_list],keys=scenarios_list,names=("scenario","regions","sector"))
-    
-    sector_needed_emssiv=df_to_print.loc[df_to_print.index.get_level_values("sector")==sector].reset_index()
-
-    sector_needed_emssiv=sector_needed_emssiv.drop(index=sector_needed_emssiv.loc[sector_needed_emssiv["quantity"]==0].index)
-
-    sector_needed_emssiv['scenario'] = pd.Categorical(sector_needed_emssiv.scenario, categories = scenarios_list, ordered = True)
-    
-    fig=px.bar(sector_needed_emssiv.sort_values(by="scenario",kind="stable"),y="emissivity",color="regions",x="scenario",
-                hover_name="regions",color_discrete_map=dict(zip(model.regions, COLORS[:len(model.regions)])))
-    #.sort_values(ascending=False,by="emissivity",axis=0)
-    
-    fig.update_layout(
-                title = f"Localisation des impacts importés par {country_importing} ({sector})",
-                xaxis_title = "Scenarios",
-                yaxis_title = f'{stressors_to_display}, en {find_stressor_unit(stressors_to_display)}'
-                )
-    
-    fig.show()
-    
-    if model.save_figures:
-        save_dir = model.figures_dir / ("Impacts_by_location_for_"+country_importing)/stressors_name_EN
-        save_dir.mkdir(exist_ok = True, parents = True)
-        fig.write_image(save_dir/f"{stressors_name_EN}_total_imports_imported_footprint_by_location_for_{sector}.png")
-
-
-def get_Dimp_extensions_for_country(
-        model,
-        country_importing, 
-        # sector, 
-        stressor_list
-        ):
-    
-    Dimp_extensions = model.iot.stressor_extension.D_imp[country_importing]
-    # Dimp_extensions = model.iot.stressor_extension.D_imp[(country_importing, sector)]
-    # Dimp_extensions = model.iot.stressor_extension.D_imp.xs(sector, level = 1, axis = 1)
-
-    Dimp_extensions = pd.concat(
-        [Dimp_extensions.loc[region].loc[stressor_list] for region in model.regions],
-        axis = 0,
-        keys= model.regions
-        )
-    
-    Dimp_extensions = Dimp_extensions.groupby(level=0, axis=0, sort=False).sum()
-
-    # Dimp_extensions = pd.concat(
-    #     [Dimp_extensions.xs(extension, level = 1, axis = 0) for extension in stressor_list],
-    #     axis = 0,
-    #     keys = stressor_list
-    #     )
-    
-    return Dimp_extensions
-
-
-
-def plot_impacts_by_location_for_one_product_FD(
-        model,
-        sector: str,
-        country_importing="FR",
-        scenarios=None,
-        stressors_to_display: str='GES',
-        ):
-    """" Plots imported impacts by location of impacts. 
-        Impacts occuring along the entire value chain are attributed to the region(s) where there actually happened.
-    
-    Args:
-        model (Model): object Model defined in model.py
-        sector (str): final demand product whose imported impacts will be displayed 
-        country_importing (str): importing country of the above product
-        scenarios (list of str): scenarios to display. Default to all existing counterfactuals (cf. model.get_counterfactuals_list()).
-        stressors_to_display (str): impacts to display (to be defined in variable STRESSORS_DICT_DEF in stresors.py).
-    """
-    
-    stressor_list = STRESSORS_DICT_DEF[stressors_to_display]['dict']
-    stressors_name_EN = STRESSORS_DICT_DEF[stressors_to_display]['name_EN']
-
-    dict_df_to_print={}
-
-    dict_df_to_print["base"]= get_Dimp_extensions_for_country(model,country_importing, stressor_list) 
-
-
-    if scenarios is None : 
-        scenarios_list = model.get_counterfactuals_list()
-    else:
-        scenarios_list = scenarios.copy()
-
-    for counterfactual in scenarios_list:
-        dict_df_to_print[counterfactual]=get_Dimp_extensions_for_country(model.counterfactuals[counterfactual],country_importing,stressor_list)
-    
-    scenarios_list = ['base']+scenarios_list
-
-    df_to_print=pd.concat([dict_df_to_print[scenario] for scenario in scenarios_list],keys=scenarios_list,names=("scenario","regions"))
-    
-    df_to_print = df_to_print.reset_index()
-    
-    # sector_needed_emssiv=df_to_print.loc[df_to_print.index.get_level_values("sector")==sector].reset_index()
-    # sector_needed_emssiv=sector_needed_emssiv.drop(index=sector_needed_emssiv.loc[sector_needed_emssiv["quantity"]==0].index)
-    df_to_print['scenario'] = pd.Categorical(df_to_print.scenario, categories = scenarios_list, ordered = True)
-
-    fig=px.bar(df_to_print.sort_values(by='scenario', kind="stable"),y=sector,color="regions",x="scenario",
-                hover_name="regions",color_discrete_map=dict(zip(model.regions, COLORS[:len(model.regions)])))
-    #.sort_values(ascending=False,by="emissivity",axis=0)
-    
-    fig.update_layout(
-                title = f"Localisation des impacts importés par {country_importing} ({sector})",
-                xaxis_title = "Scenarios",
-                yaxis_title = f'{stressors_to_display}, en {find_stressor_unit(stressors_to_display)}'
-                )
-    
-    fig.show()
-    
-    if model.save_figures:
-        save_dir = model.figures_dir / ("Impacts_by_location_for_"+country_importing)/stressors_name_EN
-        save_dir.mkdir(exist_ok = True, parents = True)
-        fig.write_image(save_dir/f"{stressors_name_EN}_final_demand_imported_footprint_by_location_for_{sector}.png")
-    
-    
-# def plot_impacts_by_exporting_country_for_one_product(
-#         model,
-#         sector: str,
-#         country_importing="FR",
-#         scenarios=None,
-#         stressors_to_display: str="GES",
-#         scope:int=3
-#         ):
-#     """" Plots imported impacts by origin(s) of the imported good.
-#         Impacts occuring along the entire value chain (in case of scope=3) or direct impacts (scope = 1) of the selected product are attributed to last exporter of the product.
-    
-#     Args:
-#         model (Model): object Model defined in model.py
-#         sector (str): imported product whose impacts will be displayed 
-#         country_importing (str): importing country of the above product
-#         scenarios (list of str): scenarios to display. Default to all existing counterfactuals (cf. model.get_counterfactuals_list()).
-#         stressors_to_display (str): impacts to display (to be defined in variable STRESSORS_DICT_DEF in stresors.py).
-#         scope (int): 1 (direct impacts of production only) or 3 (impacts of the entire value chain).
-#     """
-    
-#     stressor_list = STRESSORS_DICT_DEF[stressors_to_display]['dict']
-#     stressors_name_EN = STRESSORS_DICT_DEF[stressors_to_display]['name_EN']
-    
-#     dict_df_to_print={}
-
-#     dict_df_to_print["base"]=get_emissions_and_quantity(model.iot,country=country_importing,stressor_list=stressor_list, scope=scope)
-
-#     if scenarios is None : 
-#         scenarios_list = model.get_counterfactuals_list()
-#     else:
-#         scenarios_list = scenarios.copy()
-    
-#     for counterfactual in scenarios_list:
-#         dict_df_to_print[counterfactual]=get_emissions_and_quantity(model.counterfactuals[counterfactual].iot,country=country_importing,stressor_list=stressor_list, scope=scope)
-    
-#     scenarios_list = ['base']+scenarios_list
-    
-#     df_to_print=pd.concat([dict_df_to_print[scenario] for scenario in scenarios_list],keys=scenarios_list,names=("scenario","regions","sector"))
-    
-#     sector_needed_emssiv=df_to_print.loc[df_to_print.index.get_level_values("sector")==sector].reset_index()
-
-#     sector_needed_emssiv['scenario'] = pd.Categorical(sector_needed_emssiv.scenario, categories = scenarios_list, ordered = True)
-    
-#     fig=px.bar(sector_needed_emssiv.sort_values(by="scenario",kind="stable"),y="emissions",color="regions",x="scenario",
-#                 hover_name="regions",color_discrete_map=dict(zip(model.regions, COLORS[:len(model.regions)])))
-#     #.sort_values(ascending=False,by="emissions",axis=0)
-
-#     if scope==3:
-#         title_detail = f"Empreintes importées (scope{str(scope)})"
-#     else:
-#         title_detail = "Impacts importés (scope{str(scope)})"
-
-#     fig.update_layout(
-#                 title = f"{title_detail} par {country_importing} ({sector}) par origine d\'approvisionnement",
-#                 xaxis_title = "Scenarios",
-#                 yaxis_title = f'{stressors_to_display}, en {find_stressor_unit(stressors_to_display)}'
-#                 )
-
-#     fig.show()
-    
-    
-#     if model.save_figures:
-#         save_dir = model.figures_dir / ("Impacts_per_exporting_regions_to_"+country_importing)/stressors_name_EN
-#         save_dir.mkdir(exist_ok = True, parents = True)
-#         fig.write_image(save_dir/(f"{stressors_name_EN}_scope{str(scope)}_impacts_by_exp_reg_for_{sector}.png"))
-
-def get_extensions_by_exporting_for_country(
-        model,
-        country_importing,
-        stressor_list,
-        scope:int=3
-        ):
-    
-    if scope==1:
-        stressor = model.iot.stressor_extension.S
-    if scope==3:
-        stressor = model.iot.stressor_extension.M
-    
-    extensions_by_exporting = stressor * get_total_imports_region(model.iot,region=country_importing, scope=scope)
-    extensions_by_exporting=extensions_by_exporting.loc[stressor_list].sum()
-
-    # extensions_by_exporting.name = 'extension'
-    extensions_by_exporting = extensions_by_exporting.unstack('sector')
-    extensions_by_exporting= extensions_by_exporting.reindex(index=model.regions)
-     
-    return extensions_by_exporting
-
-
-def plot_impacts_by_exporting_country_for_one_product_2(
-        model,
-        sector: str,
-        country_importing="FR",
-        scenarios=None,
-        stressors_to_display: str="GES",
-        scope:int=3
-        ):
-    """" Plots imported impacts by origin(s) of the imported good.
-        Impacts occuring along the entire value chain (in case of scope=3) or direct impacts (scope = 1) of the selected product are attributed to last exporter of the product.
-    
-    Args:
-        model (Model): object Model defined in model.py
-        sector (str): imported product whose impacts will be displayed 
-        country_importing (str): importing country of the above product
-        scenarios (list of str): scenarios to display. Default to all existing counterfactuals (cf. model.get_counterfactuals_list()).
-        stressors_to_display (str): impacts to display (to be defined in variable STRESSORS_DICT_DEF in stresors.py).
-        scope (int): 1 (direct impacts of production only) or 3 (impacts of the entire value chain).
-    """
-    
-    stressor_list = STRESSORS_DICT_DEF[stressors_to_display]['dict']
-    stressors_name_EN = STRESSORS_DICT_DEF[stressors_to_display]['name_EN']
-    
-    dict_df_to_print={}
-
-    dict_df_to_print["base"]=get_extensions_by_exporting_for_country(model,country_importing,stressor_list, scope)
-
-    if scenarios is None : 
-        scenarios_list = model.get_counterfactuals_list()
-    else:
-        scenarios_list = scenarios.copy()
-    
-    for counterfactual in scenarios_list:
-        dict_df_to_print[counterfactual]=get_extensions_by_exporting_for_country(model.counterfactuals[counterfactual],country_importing,stressor_list,scope)
-    
-    scenarios_list = ['base']+scenarios_list
-    
-    df_to_print=pd.concat([dict_df_to_print[scenario] for scenario in scenarios_list],keys=scenarios_list,names=("scenario","regions"))
-    
-    df_to_print = df_to_print.reset_index()
-    
-    df_to_print['scenario'] = pd.Categorical(df_to_print.scenario, categories = scenarios_list, ordered = True)
-
-    fig=px.bar(df_to_print.sort_values(by="scenario",kind="stable"),y=sector,color="regions",x="scenario",
-                hover_name="regions",color_discrete_map=dict(zip(model.regions, COLORS[:len(model.regions)])))
-    #.sort_values(ascending=False,by="emissions",axis=0)
-
-    if scope==3:
-        title_detail = f"Empreintes importées (scope{str(scope)})"
-    else:
-        title_detail = f"Impacts importés (scope{str(scope)})"
-
-    fig.update_layout(
-                title = f"{title_detail} par {country_importing} ({sector}) par origine d\'approvisionnement",
-                xaxis_title = "Scenarios",
-                yaxis_title = f'{stressors_to_display}, en {find_stressor_unit(stressors_to_display)}'
-                )
-
-    fig.show()
-    
-    
-    if model.save_figures:
-        save_dir = model.figures_dir / ("Impacts_per_exporting_regions_to_"+country_importing)/stressors_name_EN
-        save_dir.mkdir(exist_ok = True, parents = True)
-        fig.write_image(save_dir/(f"{stressors_name_EN}_scope{str(scope)}_impacts_by_exp_reg_for_{sector}.png"))
-    

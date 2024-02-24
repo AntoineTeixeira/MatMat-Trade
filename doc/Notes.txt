@@ -4,7 +4,7 @@ Ici on mesure l'empreinte carbone de la consommation française et on se penche 
 
 **Diagnostic tout secteur confondu:
 
-- Forte hiérarchie entre les gaz, surtout CO2 puis CH4
+- Forte hiérarchie entre les gaz, surtoout CO2 puis CH4
 
 - Provenance varie avec le gaz : prépondérance des importations de CH4 du RoW -> lié à l'agriculture principalement.
 

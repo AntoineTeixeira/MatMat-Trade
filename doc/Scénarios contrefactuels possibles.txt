@@ -1,13 +1,14 @@
-***************************************************************
-**Scénario 1 - Repli vers une région ** (argument "allies")
-***************************************************************
-Repli des importations vers la région alliée.
+********************************
+**Scénario 1 - Repli européen **
+********************************
+Repli tout vers Europe et FR
 
 
 *********************************************************************************
-**Scénario 2 - Guerre commerciale contre une région ** (argument "opponent")
+**Scénario 2 - Guerre commerciale contre la Chine (imitation des pratiques US) **
 *********************************************************************************
-Arrêt des importations venant de la région adversaire (repli vers toutes les autres régions non adversaires)
+Retrait importation BRICS vers Europe et Other_OECD
+
 
 
 ******************************************************************************
@@ -15,6 +16,12 @@ Arrêt des importations venant de la région adversaire (repli vers toutes les a
 ******************************************************************************
 
 division des émissions importées d'un secteur d'une région par la valeur de ces importations de cette région pour ce secteur -> obtention des intensités d'émissions pour le secteur par région -> report de toute (ou partie) de l'importation de la région la plus intensive vers la moins intensive. Répéter pour chaque secteur.
+
+
+*****************************************
+**Scénario 4 - Effet accord commercial **
+*****************************************
+Accord commercial en préparation avec l'Indonésie donc contributeur important de RoW -> effet d'augmentation du commerce dans les secteurs d'imports importants depuis RoW avec RoW.
 
 
 ************************************************************************************************************************************************************

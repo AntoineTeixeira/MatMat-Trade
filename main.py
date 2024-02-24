@@ -13,7 +13,7 @@ from src.settings import (
     REGIONS_AGG,
     SECTORS_AGG,
 )
-from src.stressors import STRESSORS_DICT_DEF, GHG_PARAMS#, MATERIAL_PARAMS, COPPER_PARAMS, LANDUSE_PARAMS
+from src.stressors import GHG_PARAMS, MATERIAL_PARAMS, COPPER_PARAMS, LANDUSE_PARAMS
 from src.utils import footprint_extractor
 
 
@@ -22,7 +22,7 @@ def load_model(
     system: str = "pxp",
     aggregation_name: str = "opti_S",
     capital: bool = False,
-    stressor_subset: str = "full",
+    stressor_name: str = "ghg",
     verbose: bool = True,
 ) -> Model:
     """Loads an existing model
@@ -32,7 +32,7 @@ def load_model(
         system (str): product ('pxp') or industry ('ixi'). Defaults to 'pxp'.
         aggregation_name (str): name of the aggregation matrix used. Defaults to "opti_S".
         capital (bool, optional): True to endogenize investments and capital. Defaults to False.
-        stressor_subset (str, optional): stressors group used to calibrate the model (see STRESSORS_DICT_DEF in stressors.py).
+        stressor_name (str, optional): stressors' type (in english, for file names). Defaults to "ghg".
         verbose (bool, optional): True to print infos. Defaults to True.
 
     Returns:
@@ -45,7 +45,7 @@ def load_model(
         + "__"
         + aggregation_name
         + "__"
-        + STRESSORS_DICT_DEF[stressor_subset]['name_EN']
+        + stressor_name
         + capital * "__with_capital"
         + "/backup.pickle"
     )
